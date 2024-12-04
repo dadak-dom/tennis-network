@@ -1,0 +1,33 @@
+---
+title: "QAC239 Final Project Work"
+author: "Dominik Dadak"
+date: "2024-12-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Idea
+Of the tennis players that play both singles and doubles, can we predict doubles partnerships based on head 2 head counts of one against the other?
+
+```{r}
+library(readr)
+library(dplyr)
+library(igraph)
+
+setwd("C:/Users/dadak/Desktop/personal-projects/tennis-network")
+
+doubles2020 = read_csv("data/atp_matches_doubles_2020.csv") # Claims that there's problems, but it looks fine to me...
+doubles2019 = read_csv("data/atp_matches_doubles_2019.csv")
+doubles2018 = read_csv("data/atp_matches_doubles_2018.csv")
+df = bind_rows(doubles2018, doubles2019, doubles2020)
+
+winners = df %>% select(winner1_name, winner2_name) %>% rename(from = winner1_name, to = winner2_name)
+losers = df %>% select(loser1_name, loser2_name) %>% rename(from = loser1_name, to = loser2_name)
+
+g = graph_from_data_frame(winners)
+plot(g, vertex.label=NA)
+```
+
