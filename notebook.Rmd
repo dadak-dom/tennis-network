@@ -12,22 +12,275 @@ knitr::opts_chunk$set(echo = TRUE)
 # Idea
 Of the tennis players that play both singles and doubles, can we predict doubles partnerships based on head 2 head counts of one against the other?
 
+Another idea: what qualities of a tennis player make it more likely for them to be a doubles pairing?
+
 ```{r}
+# Getting all the data and storing in memory
 library(readr)
 library(dplyr)
 library(igraph)
+load_files = function(file_vector){
+  df <- tibble()
+  for(file in file_vector){
+    df = bind_rows(df, read_csv(paste("data/atp_matches_", file, '.csv', sep='')))
+  }
+  return(df)
+}
+doubles_data = load_files(paste0('doubles_', seq(2000, 2020)))
+singles_data = load_files(seq(2000, 2020))
+```
+
+```{r}
 
 setwd("C:/Users/dadak/Desktop/personal-projects/tennis-network")
 
-doubles2020 = read_csv("data/atp_matches_doubles_2020.csv") # Claims that there's problems, but it looks fine to me...
-doubles2019 = read_csv("data/atp_matches_doubles_2019.csv")
-doubles2018 = read_csv("data/atp_matches_doubles_2018.csv")
-df = bind_rows(doubles2018, doubles2019, doubles2020)
+# doubles2020 = read_csv("data/atp_matches_doubles_2020.csv") # Claims that there's problems, but it looks fine to me...
+# doubles2019 = read_csv("data/atp_matches_doubles_2019.csv")
+# doubles2018 = read_csv("data/atp_matches_doubles_2018.csv")
+# singles2020 = read_csv("data/atp_matches_2020.csv")
+# df = bind_rows(doubles2018, doubles2019, doubles2020)
+# 
+# winners = df %>% select(winner1_name, winner2_name) %>% rename(from = winner1_name, to = winner2_name)
+# losers = df %>% select(loser1_name, loser2_name) %>% rename(from = loser1_name, to = loser2_name)
+# 
+# g = graph_from_data_frame(winners)
 
-winners = df %>% select(winner1_name, winner2_name) %>% rename(from = winner1_name, to = winner2_name)
-losers = df %>% select(loser1_name, loser2_name) %>% rename(from = loser1_name, to = loser2_name)
+# Create networks between players for singles matches and doubles partnerships
 
-g = graph_from_data_frame(winners)
-plot(g, vertex.label=NA)
+# Making the singles network and assigning head-2-head counts
+library(purrr)
+library(ggplot2)
+# get head-to-head singles records
+head_to_head <- singles_data %>%
+  mutate(
+    player1 = pmap_chr(list(winner_name, loser_name), ~ sort(c(...))[1]),
+    player2 = pmap_chr(list(winner_name, loser_name), ~ sort(c(...))[2]),
+    winner_is_player1 = winner_name == player1
+  ) %>%
+  group_by(player1, player2) %>%
+  summarise(
+    player1_wins = sum(winner_is_player1),
+    player2_wins = sum(!winner_is_player1),
+    .groups = "drop"
+  )
+
+head_to_head_diff = head_to_head %>% mutate(diff = player1_wins - player2_wins) %>% mutate(diff = abs(diff)) %>% select(player1, player2, diff)
+
+singles_g = graph_from_data_frame(singles_data %>% select(winner_name, loser_name), directed=F)
+# add edge key
+head_to_head_diff <- head_to_head_diff %>%
+  mutate(
+    edge_key = paste(pmin(player1, player2), pmax(player1, player2), sep = "_")
+  )
+
+
+edge_keys_graph <- as_data_frame(singles_g, what = "edges") %>%
+  mutate(
+    edge_key = paste(pmin(from, to), pmax(from, to), sep = "_")
+  )
+
+# assign weights based on matching edge keys
+E(singles_g)$weight <- head_to_head_diff$diff[match(edge_keys_graph$edge_key, head_to_head_diff$edge_key)]
+test4 = tibble(E(singles_g)$weight)
+# Finding the distribution of edge weights in the network
+tibble(E(singles_g)$weight) %>% rename(X = names(.)[1]) %>% 
+  ggplot(aes(x = X)) + geom_histogram(binwidth = 1) + xlab("Edge Weight (difference in Win/Loss)") + ggtitle("Distribution of Edge Weights in Singles Network") + ylim(c(0,35000))
+# test3 = max(E(singles_g)$weight)
+# Building the Doubles Network
+temp = doubles_data %>% select(winner1_name, winner2_name) %>% rename(player1 = winner1_name, player2 = winner2_name)
+temp2 = doubles_data %>% select(loser1_name, loser2_name) %>% rename(player1 = loser1_name, player2 = loser2_name)
+temp3 = bind_rows(temp, temp2)
+doubles_g = graph_from_data_frame(bind_rows(temp, temp2) %>% na.omit(), directed = F) 
+# plot(doubles_g, vertex.label = NA, vertex.size=5)
+
+# Some basic calculations for the doubles network
+d = tibble(igraph::degree(doubles_g))
+# Make a histogram of the node degree distribution
+d = d %>% rename(X = names(.)[1])
+d %>% 
+  ggplot(aes(x=X)) + geom_histogram(binwidth=1) + xlab("Node Degree") + ggtitle("Distribution of Node Degrees in Doubles Network (Number of Unique Partnerships)")
+
+# Distribution of edge weights in doubles network, after transferring existing edges
+doubles_edges <- as_data_frame(doubles_g, what = "edges") %>%
+  mutate(
+    edge_key = paste(pmin(from, to), pmax(from, to), sep = "_")
+  )
+# Match and assign weights to the doubles graph
+E(doubles_g)$weight <- head_to_head_diff$diff[match(
+  doubles_edges$edge_key,
+  head_to_head_diff$edge_key,
+  # nomatch= 0
+)]
+
+# Distribution of edge weights in doubles
+tibble(E(doubles_g)$weight) %>% rename(X = names(.)[1]) %>% 
+  ggplot(aes(x = X)) + geom_histogram(binwidth = 1) + ylim(c(0, 35000))
+
+# take only nodes found in both graphs
+all_nodes <- union(V(singles_g)$name, V(doubles_g)$name)
+
+singles_g <- singles_g %>%
+  add_vertices(length(setdiff(all_nodes, V(singles_g)$name)), 
+               name = setdiff(all_nodes, V(singles_g)$name))
+
+doubles_g <- doubles_g %>%
+  add_vertices(length(setdiff(all_nodes, V(doubles_g)$name)), 
+               name = setdiff(all_nodes, V(doubles_g)$name))
+
+doubles_edges <- as_data_frame(doubles_g, what = "edges") %>%
+  mutate(
+    edge_key = paste(pmin(from, to), pmax(from, to), sep = "_")
+  )
+
+
+# Match and assign weights to the doubles graph
+E(doubles_g)$weight <- head_to_head_diff$diff[match(
+  doubles_edges$edge_key,
+  head_to_head_diff$edge_key
+)]
+
+# E(doubles_g)$weight <- head_to_head_diff$diff[match(edge_keys_graph$edge_key, head_to_head_diff$edge_key)]
+# print(as_adjacency_matrix(doubles_g))
+# degree(g)
+# plot(singles_g)
+# plot(doubles_g)
+# plot(g, vertex.size=5, vertex.label.cex=0.5, edge.size=0.1, edge.arrow.size=0.1, main="Doubles Partnerships that Won a Match between 2018 and 2020")
+# Potentially, I can calculate the singles triads, calculate their relations
+# (would need to find a way to define a love/hate relationship, maybe looking at the head to heads? A player likes a player that they beat/don't play, but a player doesn't like people they lose to?)
+```
+```{r}
+common_nodes <- intersect(V(singles_g)$name, V(doubles_g)$name)
+overlap_singles = induced_subgraph(singles_g, V(singles_g)$name %in% common_nodes)
+overlap_doubles = induced_subgraph(doubles_g, V(doubles_g)$name %in% common_nodes)
+V(overlap_singles)
+V(overlap_doubles)
+E(overlap_singles)
+# Wait, what if there are players that exist in singles, but not in doubles? Let's remove them...
+# Here's the histogram for singles...
+
+tibble(E(overlap_singles)$weight) %>% rename(X = names(.)[1]) %>% 
+  ggplot(aes(x = X)) + geom_histogram(binwidth = 1) + ylim(c(0,35000)) + xlab("Edge Weight") + ggtitle("Distribution of Edge Weights", subtitle = "(only looking at overlap between singles and doubles, Singles Network)")
+```
+```{r}
+# And for doubles:
+test = tibble(E(overlap_doubles)$weight) %>% rename(X = names(.)[1])
+tibble(E(overlap_doubles)$weight) %>% rename(X = names(.)[1]) %>% 
+  ggplot(aes(x = X)) + geom_histogram(binwidth = 1) + ylim(c(0,35000)) + xlab("Edge Weight") + ggtitle("Distribution of Edge Weights", subtitle = "(only looking at overlap between singles and doubles, Doubles Network)")
+
+E(singles_g)
+E(doubles_g)
+E(overlap_singles)
+E(overlap_doubles)
+```
+```{r}
+# It looks like the distribution stays roughly the same.
+# How can we perform hypothesis testing?
+ds = igraph::degree(overlap_singles)
+ds
+
+# Made with ChatGPT prompt: how would I be able to, for each node, calculate the average weight of each edge attached?
+# Calculate the average edge weight for each node
+average_edge_weights <- sapply(V(overlap_singles), function(v) {
+  edges <- incident(overlap_singles, v, mode = "all")  # Get edges connected to the node
+  mean(E(overlap_singles)$weight[edges])              # Compute the average weight
+})
+
+# Add as a vertex attribute for convenience
+V(overlap_singles)$average_weight <- average_edge_weights
+
+# Print results
+data.frame(
+  node = V(overlap_singles)$name,
+  avg_weight = V(overlap_singles)$average_weight
+)
+
+average_edge_weights2 <- sapply(V(overlap_doubles), function(v) {
+  edges <- incident(overlap_doubles, v, mode = "all")  # Get edges connected to the node
+  mean(E(overlap_doubles)$weight[edges], na.rm = T)              # Compute the average weight
+})
+
+# Add as a vertex attribute for convenience
+V(overlap_doubles)$average_weight <- average_edge_weights2
+
+# Print results
+data.frame(
+  node = V(overlap_doubles)$name,
+  avg_weight = V(overlap_doubles)$average_weight
+)
+
+# Results
+
+cor(V(overlap_singles)$average_weight, V(overlap_doubles)$average_weight, use='pairwise.complete.obs')
+cor(igraph::degree(overlap_doubles), V(overlap_doubles)$average_weight, use='pairwise.complete.obs')
+
+df = tibble(dgr = igraph::degree(overlap_doubles), aw = V(overlap_doubles)$average_weight)
+
+df %>% ggplot() + 
+  geom_point(aes(x = dgr, y = aw)) + 
+  geom_smooth(aes(x=dgr, y= aw), method = lm, se=F) + 
+  expand_limits(y=0) + ggtitle("Double's Player Node Degree vs. Average Parter H2H Differential") + xlab("Player degree") + ylab("Average partner singles head-to-head differential")
+###
+```
+```{r}
+
+# Next steps: create a network of like/hate relationships in singles (maybe I'll say default is like, a head to head differential greater than 2 means hate), and then see how that translates to doubles pairings. 
+# My hypothesis is that players that don't like each other (one plays and beats the other consistently) will be less likely to form a pair.
+# This should be fairly simple; construct a network of singles pairings, noting either love or hate relations
+# Then, create a doubles network, consisting of the players in the singles network (need to look at players that play both). We say that we expect there to be no edge in doubles if there exists a significant head to head differential in singles. For each predicted edge, compare that to reality. Then we could perform some calculations, and see how close we are.
+# plot(doubles_g)
+
+```
+```{r}
+# Calculating the significance relative to random graphs
+# E(doubles_g)$weight = 1
+# Made with ChatGPT prompt:
+# I want to see whether or not, for tennis professionals, head-to-head differences are an impact on doubles pairings. I have a graph of singles opponents, where the weight is the difference in wins/losses against that person, and I have a network of doubles pairings. How can I perform hypothesis testing with this information?
+set.seed(42)
+observed_stat <- sum(E(doubles_g)$weight * E(singles_g)$weight, na.rm = TRUE)
+E(doubles_g)$weight
+observed_stat
+null_stats <- replicate(1000, {
+  # Randomize doubles network (e.g., edge swap preserving degree)
+  randomized_doubles_g <- rewire(doubles_g, with = keeping_degseq(niter = ecount(doubles_g) * 10))
+  
+  # Calculate test statistic for randomized network
+  sum(E(randomized_doubles_g)$weight * E(singles_g)$weight, na.rm = TRUE)
+})
+
+# Compute p-value
+p_value <- mean(null_stats >= observed_stat)
+cat("Observed Test Statistic:", observed_stat, "\n")
+cat("P-value:", p_value, "\n")
+```
+
+
+```{r}
+# Check statistical significance
+library(statnet)
+
+all_nodes <- union(V(singles_g)$name, V(doubles_g)$name)
+
+singles_g <- singles_g %>%
+  add_vertices(length(setdiff(all_nodes, V(singles_g)$name)), 
+               name = setdiff(all_nodes, V(singles_g)$name))
+
+doubles_g <- doubles_g %>%
+  add_vertices(length(setdiff(all_nodes, V(doubles_g)$name)), 
+               name = setdiff(all_nodes, V(doubles_g)$name))
+
+singles_adj <- as.matrix(as_adjacency_matrix(singles_g, attr = "weight"))
+doubles_adj <- as.matrix(as_adjacency_matrix(doubles_g, attr = "weight"))
+
+# singles_adj <- as.matrix(as_adjacency_matrix(singles_g))
+# doubles_adj <- as.matrix(as_adjacency_matrix(doubles_g))
+# gcor(as_adjacency_matrix(singles_g), as_adjacency_matrix(doubles_g))
+# Remove edges with weight > 2
+# singles_adj[singles_adj > 2] <- 0
+
+correlation <- gcor(singles_adj, doubles_adj)
+print(correlation)
+# as_adjacency_matrix(doubles_data)
+result = qaptest(list(singles_adj, doubles_adj), gcor, g1=1, g2=2, reps=1000)
+print(result)
 ```
 
