@@ -5,17 +5,21 @@ library(igraph)
 library(purrr)
 library(ggplot2)
 library(tidyr)
-load_files = function(file_vector){
-  df <- tibble()
-  for(file in file_vector){
-    df = bind_rows(df, read_csv(paste("data/atp_matches_", file, '.csv', sep='')))
-  }
-  return(df)
-}
+# load_files = function(file_vector){
+#   df <- tibble()
+#   for(file in file_vector){
+#     df = bind_rows(df, read_csv(paste("data/atp_matches_", file, '.csv', sep='')))
+#   }
+#   return(df)
+# }
 setwd("C:/Users/dadak/Desktop/personal-projects/tennis-network")
-doubles_data = load_files(paste0('doubles_', seq(2000, 2020)))
-singles_data = load_files(seq(2000, 2020))
+# doubles_data = load_files(paste0('doubles_', seq(2000, 2020)))
+# singles_data = load_files(seq(2000, 2020))
 
+# write_csv(singles_data, "singles_data.csv")
+# write_csv(doubles_data, "doubles_data.csv")
+singles_data = read_csv("data/singles_data.csv")
+doubles_data = read_csv("data/doubles_data.csv")
 #################################################
 # Constructing the networks
 head_to_head <- singles_data %>%
